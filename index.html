@@ -288,6 +288,7 @@
       align-items: center;
       border: 2px solid #ffffff;
       border-radius: 50%;
+      box-sizing: border-box;
       box-shadow: 0 2px 8px rgba(15, 23, 42, 0.35);
       color: #ffffff;
       display: flex;
@@ -295,7 +296,15 @@
       font-weight: 900;
       height: 28px;
       justify-content: center;
+      line-height: 1;
+      margin: 0;
+      padding: 0;
       width: 28px;
+    }
+    .map-pin span {
+      display: block;
+      line-height: 1;
+      transform: translateY(-1px);
     }
     .map-pin.pickup {
       background: var(--accent);
