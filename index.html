@@ -4,11 +4,6 @@
   <meta charset="UTF-8" />
   <title>Rolling Pair Dispatch Simulator</title>
 
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-  />
-
   <style>
     :root {
       --panel-bg: #f7f8fa;
@@ -224,6 +219,90 @@
     .badge.error {
       background: var(--danger);
     }
+    .health.connected {
+      color: var(--accent);
+      font-weight: 800;
+    }
+    .health.down {
+      color: var(--danger);
+      font-weight: 800;
+    }
+    .control-row,
+    .sample-grid {
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+    }
+    .control-row {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .sample-grid {
+      grid-template-columns: 1fr;
+    }
+    button {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      color: var(--ink);
+      cursor: pointer;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 800;
+      min-height: 36px;
+      padding: 8px 10px;
+      text-align: center;
+    }
+    button:hover {
+      border-color: var(--route);
+    }
+    .toast-host {
+      position: absolute;
+      left: 10px;
+      bottom: 10px;
+      z-index: 1000;
+      display: grid;
+      gap: 8px;
+      width: min(320px, calc(100vw - 24px));
+    }
+    .toast {
+      border-radius: 8px;
+      background: rgba(31, 41, 51, 0.94);
+      color: #ffffff;
+      font-size: 13px;
+      line-height: 1.35;
+      padding: 10px 12px;
+      box-shadow: 0 8px 22px rgba(15, 23, 42, 0.2);
+    }
+    .toast.accepted,
+    .toast.delivered {
+      background: var(--accent);
+    }
+    .toast.queued,
+    .toast.routing {
+      background: var(--warning);
+    }
+    .toast.error {
+      background: var(--danger);
+    }
+    .map-pin {
+      align-items: center;
+      border: 2px solid #ffffff;
+      border-radius: 50%;
+      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.35);
+      color: #ffffff;
+      display: flex;
+      font-size: 12px;
+      font-weight: 900;
+      height: 28px;
+      justify-content: center;
+      width: 28px;
+    }
+    .map-pin.pickup {
+      background: var(--accent);
+    }
+    .map-pin.drop {
+      background: var(--danger);
+    }
     .empty {
       padding: 12px;
       color: var(--muted);
@@ -248,6 +327,9 @@
         left: 10px;
         right: 10px;
       }
+      .toast-host {
+        bottom: 12px;
+      }
     }
     @media (max-width: 420px) {
       .summary-grid {
@@ -269,6 +351,7 @@
     <section class="map-panel" aria-label="Dispatch map">
       <div id="map"></div>
       <div id="status">Idle</div>
+      <div class="toast-host" id="toastHost" aria-live="polite"></div>
     </section>
 
     <aside class="dashboard" aria-label="Delivery dashboard">
@@ -301,6 +384,16 @@
           <p class="metric-value" id="metricQueue">0</p>
           <p class="metric-note">Waiting for route</p>
         </div>
+        <div class="metric">
+          <p class="metric-label">Distance</p>
+          <p class="metric-value" id="metricDistance">0 km</p>
+          <p class="metric-note">Current route</p>
+        </div>
+        <div class="metric">
+          <p class="metric-label">ETA</p>
+          <p class="metric-value" id="metricEta">0 min</p>
+          <p class="metric-note">Current route</p>
+        </div>
       </section>
 
       <section class="dashboard-section" aria-label="Current delivery status">
@@ -320,6 +413,31 @@
           <span class="label">Position</span>
           <span class="value" id="agentPosition">12.9716, 77.5946</span>
         </div>
+        <div class="status-row">
+          <span class="label">OSRM</span>
+          <span class="value health" id="osrmStatus">Unknown</span>
+        </div>
+      </section>
+
+      <section class="dashboard-section" aria-label="Simulator controls">
+        <div class="section-title">
+          <h2>Controls</h2>
+          <span class="hint">Simulation</span>
+        </div>
+        <div class="control-row">
+          <button type="button" id="pauseButton">Pause</button>
+          <button type="button" id="resetButton">Reset</button>
+          <button type="button" id="clearLogsButton">Clear logs</button>
+          <button type="button" id="exportLogsButton">Export CSV</button>
+        </div>
+      </section>
+
+      <section class="dashboard-section" aria-label="Sample orders">
+        <div class="section-title">
+          <h2>Sample orders</h2>
+          <span class="hint">Quick load</span>
+        </div>
+        <div class="sample-grid" id="sampleOrders"></div>
       </section>
 
       <section class="dashboard-section" aria-label="Live orders">
@@ -354,7 +472,6 @@
     </aside>
   </main>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script type="module" src="/main.js"></script>
 </body>
 </html>
