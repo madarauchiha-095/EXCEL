@@ -15,6 +15,7 @@ A Vite + Leaflet simulator for rolling-pair delivery dispatch in Bangalore. The 
 - `npm run build` creates the production build.
 - `npm test` runs route-planner unit tests.
 - `npm run osrm:start` starts `osrm-routed` against `osrm-data/bangalore.osrm`.
+- Windows direct command: `docker run --rm -t -i -p 5000:5000 -v "%cd%/osrm-data:/data" osrm/osrm-backend osrm-routed --algorithm mld /data/bangalore.osrm`
 
 ## Notes
 
