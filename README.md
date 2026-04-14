@@ -1,6 +1,6 @@
 ﻿# Delivery Routing Dashboard
 
-A Vite + Leaflet simulator for rolling-pair delivery dispatch in Bangalore. The browser app uses a local OSRM server on port 5000 for route geometry, distance, and ETA.
+A Vite + Leaflet multi-agent simulator for rolling-pair delivery dispatch in Bangalore. The browser app uses a local OSRM server on port 5000 for route geometry, distance, and ETA.
 
 ## Run
 
@@ -8,6 +8,8 @@ A Vite + Leaflet simulator for rolling-pair delivery dispatch in Bangalore. The 
 2. Start OSRM with the prepared Bangalore data: `npm run osrm:start`
 3. In another terminal, start the app: `npm run dev`
 4. Open the local Vite URL and click the map twice to create an order.
+
+The simulator starts with three delivery agents. Each agent has its own marker, route, active order group, queue, and execution timer.
 
 The optional backend API can be started with `npm run backend`.
 

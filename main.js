@@ -18,31 +18,53 @@ import { loadDashboardState, saveDashboardState } from "./storage.js";
 const dashboard = createDashboard();
 const stored = loadDashboardState(STORAGE_KEY);
 
-const agent = {
-  ...AGENTS[0],
-  marker: null,
-};
-
-const state = {
-  agent,
-  agents: [agent],
+const agentStates = AGENTS.map(agentConfig => ({
+  agent: { ...agentConfig, marker: null },
   activeGroup: [],
   holdQueue: [],
-  allOrders: stored.allOrders,
-  orderLogs: stored.orderLogs,
-  deliveryLogs: stored.deliveryLogs,
   routePlan: [],
   legIndex: 0,
   legCursor: 0,
   lastPairingPassed: null,
   currentMetrics: routeMetrics([]),
-  osrmState: "Unknown",
   isPaused: false,
   isRouting: false,
   recomputeQueued: false,
+  timer: null,
+}));
+
+const state = {
+  agentStates,
+  allOrders: stored.allOrders,
+  orderLogs: stored.orderLogs,
+  deliveryLogs: stored.deliveryLogs,
+  osrmState: "Unknown",
+  isPaused: false,
 };
 
-let timer = null;
+const mapView = createMapView({
+  mapId: "map",
+  center: agentStates[0].agent,
+  onOrderPoints(pickup, drop) {
+    if (!drop) {
+      dashboard.toast("Pickup selected. Click a drop point.", "active");
+      return;
+    }
+    dashboard.toast("Drop selected.", "active");
+    createOrder(pickup, drop);
+  },
+});
+
+for (const agentState of agentStates) {
+  agentState.agent.marker = mapView.createAgentMarker(agentState.agent);
+}
+
+const osrm = createOsrmClient({
+  onHealthChange(nextState) {
+    state.osrmState = nextState;
+    render();
+  },
+});
 
 function persist() {
   saveDashboardState(STORAGE_KEY, state);
@@ -50,6 +72,17 @@ function persist() {
 
 function render() {
   dashboard.render(state);
+}
+
+function allActiveAssignments() {
+  return new Map(agentStates.map(agentState => [
+    agentState.agent.id,
+    agentState.activeGroup,
+  ]));
+}
+
+function agentStateById(agentId) {
+  return agentStates.find(agentState => agentState.agent.id === agentId);
 }
 
 function addOrderLog(message, order, badge = "active") {
@@ -65,28 +98,6 @@ function addDeliveryLog(message, order, badge = "routing") {
   persist();
   render();
 }
-
-const mapView = createMapView({
-  mapId: "map",
-  center: agent,
-  onOrderPoints(pickup, drop) {
-    if (!drop) {
-      dashboard.toast("Pickup selected. Click a drop point.", "active");
-      return;
-    }
-    dashboard.toast("Drop selected.", "active");
-    createOrder(pickup, drop);
-  },
-});
-
-agent.marker = mapView.createAgentMarker(agent);
-
-const osrm = createOsrmClient({
-  onHealthChange(nextState) {
-    state.osrmState = nextState;
-    render();
-  },
-});
 
 function createOrder(pickup, drop, options = {}) {
   const order = {
@@ -109,221 +120,232 @@ function createOrder(pickup, drop, options = {}) {
 }
 
 function onNewOrder(order) {
-  const assignments = new Map([[agent.id, state.activeGroup]]);
   const selectedAgent = selectAgentForOrder(
     order,
-    state.agents,
-    assignments,
+    agentStates.map(agentState => agentState.agent),
+    allActiveAssignments(),
     DISPATCH_CONSTRAINTS
-  ) || agent;
+  ) || agentStates[0].agent;
+  const selectedState = agentStateById(selectedAgent.id);
 
   const result = acceptOrQueueOrder({
     order,
     agent: selectedAgent,
-    activeGroup: state.activeGroup,
-    holdQueue: state.holdQueue,
+    activeGroup: selectedState.activeGroup,
+    holdQueue: selectedState.holdQueue,
     constraints: DISPATCH_CONSTRAINTS,
   });
 
   if (result.accepted) {
     addOrderLog(`Accepted order ${orderLabel(order)} for ${selectedAgent.label}`, order, "accepted");
-    dashboard.toast(`Order ${orderLabel(order)} accepted`, "accepted");
-    recompute();
+    dashboard.toast(`Order ${orderLabel(order)} accepted by ${selectedAgent.label}`, "accepted");
+    recomputeAgent(selectedState);
   } else {
     addOrderLog(`Queued order ${orderLabel(order)} for ${selectedAgent.label}`, order, "queued");
-    dashboard.toast(`Order ${orderLabel(order)} queued`, "queued");
+    dashboard.toast(`Order ${orderLabel(order)} queued for ${selectedAgent.label}`, "queued");
     render();
   }
 }
 
-async function recompute() {
-  if (state.isRouting) {
-    state.recomputeQueued = true;
+async function recomputeAgent(agentState) {
+  if (agentState.isRouting) {
+    agentState.recomputeQueued = true;
     return;
   }
 
-  if (state.activeGroup.length === 0) {
-    dashboard.setRouteLeg("No active route");
+  if (agentState.activeGroup.length === 0) {
+    mapView.clearRoute(agentState.agent.id);
     render();
     return;
   }
 
-  state.isRouting = true;
-  dashboard.setStatus("Routing...");
-  dashboard.setRouteLeg("Calculating route");
-  addDeliveryLog("Route recalculation started", null, "routing");
+  agentState.isRouting = true;
+  dashboard.setStatus(`${agentState.agent.label} routing...`);
+  dashboard.setRouteLeg(`${agentState.agent.label}: calculating route`);
+  addDeliveryLog(`${agentState.agent.label} route recalculation started`, null, "routing");
 
   try {
     const result = await buildRoutePlan({
-      agent,
-      activeGroup: state.activeGroup,
+      agent: agentState.agent,
+      activeGroup: agentState.activeGroup,
       routeFn: osrm.route,
       pickupThreshold: PICKUP_THRESHOLD,
       deliveryThreshold: DELIVERY_THRESHOLD,
     });
 
-    state.routePlan = result.plan;
-    state.currentMetrics = result.metrics;
-    state.lastPairingPassed = result.pairingPassed;
-    state.legIndex = 0;
-    state.legCursor = 0;
+    agentState.routePlan = result.plan;
+    agentState.currentMetrics = result.metrics;
+    agentState.lastPairingPassed = result.pairingPassed;
+    agentState.legIndex = 0;
+    agentState.legCursor = 0;
 
     for (const message of result.messages) {
-      addDeliveryLog(message.text, message.order, message.badge);
+      addDeliveryLog(`${agentState.agent.label}: ${message.text}`, message.order, message.badge);
     }
 
-    mapView.drawRoute(flatten(state.routePlan));
+    mapView.drawRoute(agentState.agent.id, flatten(agentState.routePlan), agentState.agent.routeColor);
     render();
-    startExecution();
+    startAgentExecution(agentState);
   } catch (error) {
-    clearInterval(timer);
-    dashboard.setStatus("Routing failed. Check OSRM.");
+    clearInterval(agentState.timer);
+    dashboard.setStatus(`${agentState.agent.label} routing failed. Check OSRM.`);
     dashboard.setRouteLeg(error.message || "OSRM route failed");
-    addDeliveryLog(`Routing failed: ${error.message || "OSRM unavailable"}`, null, "error");
-    dashboard.toast("Routing failed. Check OSRM Docker.", "error");
+    addDeliveryLog(`${agentState.agent.label} routing failed: ${error.message || "OSRM unavailable"}`, null, "error");
+    dashboard.toast(`${agentState.agent.label} routing failed. Check OSRM Docker.`, "error");
   } finally {
-    state.isRouting = false;
-    if (state.recomputeQueued) {
-      state.recomputeQueued = false;
-      recompute();
+    agentState.isRouting = false;
+    if (agentState.recomputeQueued) {
+      agentState.recomputeQueued = false;
+      recomputeAgent(agentState);
     }
   }
 }
 
-function startExecution() {
-  clearInterval(timer);
-  if (state.routePlan.length === 0) {
-    finishRoute();
+function startAgentExecution(agentState) {
+  clearInterval(agentState.timer);
+  if (agentState.routePlan.length === 0) {
+    finishAgentRoute(agentState);
     return;
   }
-  state.legIndex = 0;
-  state.legCursor = 0;
-  executeLeg();
+  agentState.legIndex = 0;
+  agentState.legCursor = 0;
+  executeAgentLeg(agentState);
 }
 
-function executeLeg() {
-  if (state.isPaused) {
-    dashboard.setStatus("Paused");
+function executeAgentLeg(agentState) {
+  if (agentState.isPaused) {
+    dashboard.setStatus(`${agentState.agent.label} paused`);
     return;
   }
 
-  if (state.legIndex >= state.routePlan.length) {
-    finishRoute();
+  if (agentState.legIndex >= agentState.routePlan.length) {
+    finishAgentRoute(agentState);
     return;
   }
 
-  const leg = state.routePlan[state.legIndex];
-  dashboard.setStatus(`${leg.type.toUpperCase()} Order ${leg.order.id}`);
+  const leg = agentState.routePlan[agentState.legIndex];
+  dashboard.setStatus(`${agentState.agent.label}: ${leg.type.toUpperCase()} Order ${leg.order.id}`);
   leg.order.statusText = leg.type === "pickup" ? "To pickup" : "To drop";
   leg.order.statusKey = leg.type === "pickup" ? "active" : "picked";
-  dashboard.setRouteLeg(`${leg.type.toUpperCase()} ${orderLabel(leg.order)} (${state.legIndex + 1}/${state.routePlan.length})`);
+  dashboard.setRouteLeg(`${agentState.agent.label}: ${leg.type.toUpperCase()} ${orderLabel(leg.order)} (${agentState.legIndex + 1}/${agentState.routePlan.length})`);
   render();
 
-  timer = setInterval(() => {
-    if (state.isPaused) {
-      clearInterval(timer);
+  agentState.timer = setInterval(() => {
+    if (agentState.isPaused) {
+      clearInterval(agentState.timer);
       return;
     }
 
-    if (state.legCursor >= leg.coords.length) {
-      clearInterval(timer);
-      completeLeg();
+    if (agentState.legCursor >= leg.coords.length) {
+      clearInterval(agentState.timer);
+      completeAgentLeg(agentState);
       return;
     }
 
-    const [lng, lat] = leg.coords[state.legCursor];
-    agent.lat = lat;
-    agent.lng = lng;
-    mapView.updateAgentMarker(agent);
-    dashboard.els.agentPosition.innerText = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
-    state.legCursor += STEP;
+    const [lng, lat] = leg.coords[agentState.legCursor];
+    agentState.agent.lat = lat;
+    agentState.agent.lng = lng;
+    mapView.updateAgentMarker(agentState.agent);
+    agentState.legCursor += STEP;
   }, SPEED);
 }
 
-function completeLeg() {
-  const leg = state.routePlan[state.legIndex];
+function completeAgentLeg(agentState) {
+  const leg = agentState.routePlan[agentState.legIndex];
   const order = leg.order;
 
   if (leg.type === "pickup") {
     order.picked = true;
     order.statusText = "Picked";
     order.statusKey = "picked";
-    addDeliveryLog(`Picked up order ${orderLabel(order)}`, order, "picked");
-    dashboard.toast(`Order ${orderLabel(order)} picked up`, "picked");
+    addDeliveryLog(`${agentState.agent.label} picked up order ${orderLabel(order)}`, order, "picked");
+    dashboard.toast(`${agentState.agent.label} picked up ${orderLabel(order)}`, "picked");
   }
 
   if (leg.type === "drop") {
     order.delivered = true;
     order.statusText = "Delivered";
     order.statusKey = "delivered";
-    addDeliveryLog(`Delivered order ${orderLabel(order)}`, order, "delivered");
-    dashboard.toast(`Order ${orderLabel(order)} delivered`, "delivered");
+    addDeliveryLog(`${agentState.agent.label} delivered order ${orderLabel(order)}`, order, "delivered");
+    dashboard.toast(`${agentState.agent.label} delivered ${orderLabel(order)}`, "delivered");
     order.pm?.remove();
     order.dm?.remove();
   }
 
   persist();
-  state.legIndex++;
-  state.legCursor = 0;
+  agentState.legIndex++;
+  agentState.legCursor = 0;
   render();
-  executeLeg();
+  executeAgentLeg(agentState);
 }
 
-function finishRoute() {
-  addDeliveryLog("Route finished", null, "delivered");
-  state.activeGroup = state.activeGroup.filter(order => !order.delivered);
+function finishAgentRoute(agentState) {
+  addDeliveryLog(`${agentState.agent.label} route finished`, null, "delivered");
+  agentState.activeGroup = agentState.activeGroup.filter(order => !order.delivered);
 
-  if (state.activeGroup.length === 0) {
+  if (agentState.activeGroup.length === 0) {
     const promoted = promoteQueuedOrders({
-      activeGroup: state.activeGroup,
-      holdQueue: state.holdQueue,
-      agent,
+      activeGroup: agentState.activeGroup,
+      holdQueue: agentState.holdQueue,
+      agent: agentState.agent,
       constraints: DISPATCH_CONSTRAINTS,
     });
 
     for (const order of promoted) {
-      addOrderLog(`Promoted order ${orderLabel(order)} from queue`, order, "accepted");
+      addOrderLog(`Promoted order ${orderLabel(order)} for ${agentState.agent.label}`, order, "accepted");
     }
   }
 
-  if (state.activeGroup.length === 0) {
+  if (agentState.activeGroup.length === 0) {
+    agentState.routePlan = [];
+    agentState.currentMetrics = routeMetrics([]);
+    agentState.lastPairingPassed = null;
+    mapView.clearRoute(agentState.agent.id);
     dashboard.setStatus("Idle");
     dashboard.setRouteLeg("No active route");
-    state.currentMetrics = routeMetrics([]);
     render();
     return;
   }
 
-  recompute();
+  recomputeAgent(agentState);
 }
 
-function togglePause() {
-  if (state.routePlan.length === 0) return;
-  state.isPaused = !state.isPaused;
-  if (!state.isPaused) executeLeg();
+function togglePauseAll() {
+  const shouldPause = !state.isPaused;
+  state.isPaused = shouldPause;
+  for (const agentState of agentStates) {
+    agentState.isPaused = shouldPause;
+    if (!shouldPause && agentState.routePlan.length > 0) {
+      executeAgentLeg(agentState);
+    }
+  }
   render();
 }
 
 function resetSimulation() {
-  clearInterval(timer);
-  timer = null;
-  state.routePlan = [];
-  state.activeGroup.forEach(order => {
-    order.pm?.remove();
-    order.dm?.remove();
-  });
-  state.holdQueue.forEach(order => {
-    order.pm?.remove();
-    order.dm?.remove();
-  });
-  state.activeGroup = [];
-  state.holdQueue = [];
-  state.legIndex = 0;
-  state.legCursor = 0;
+  for (const agentState of agentStates) {
+    clearInterval(agentState.timer);
+    agentState.timer = null;
+    agentState.routePlan = [];
+    agentState.activeGroup.forEach(order => {
+      order.pm?.remove();
+      order.dm?.remove();
+    });
+    agentState.holdQueue.forEach(order => {
+      order.pm?.remove();
+      order.dm?.remove();
+    });
+    agentState.activeGroup = [];
+    agentState.holdQueue = [];
+    agentState.legIndex = 0;
+    agentState.legCursor = 0;
+    agentState.isPaused = false;
+    agentState.lastPairingPassed = null;
+    agentState.currentMetrics = routeMetrics([]);
+    mapView.clearRoute(agentState.agent.id);
+  }
+
   state.isPaused = false;
-  state.lastPairingPassed = null;
-  state.currentMetrics = routeMetrics([]);
-  mapView.clearRoute();
   dashboard.setStatus("Idle");
   dashboard.setRouteLeg("No active route");
   addDeliveryLog("Simulation reset", null, "routing");
@@ -373,7 +395,7 @@ async function checkOsrmHealth() {
 }
 
 dashboard.renderSampleButtons(SAMPLE_ORDERS);
-dashboard.els.pauseButton.addEventListener("click", togglePause);
+dashboard.els.pauseButton.addEventListener("click", togglePauseAll);
 dashboard.els.resetButton.addEventListener("click", resetSimulation);
 dashboard.els.clearLogsButton.addEventListener("click", clearLogs);
 dashboard.els.exportLogsButton.addEventListener("click", exportLogs);

@@ -12,8 +12,10 @@ export function selectAgentForOrder(order, agents, assignments = new Map(), cons
         distanceToPickup: haversine(agent, order.pickup),
       };
     })
-    .filter(candidate => candidate.load < (candidate.agent.maxActiveOrders || maxActiveOrders))
     .sort((a, b) => {
+      const aHasCapacity = a.load < (a.agent.maxActiveOrders || maxActiveOrders);
+      const bHasCapacity = b.load < (b.agent.maxActiveOrders || maxActiveOrders);
+      if (aHasCapacity !== bHasCapacity) return aHasCapacity ? -1 : 1;
       const loadDelta = a.load - b.load;
       if (loadDelta !== 0) return loadDelta;
       return a.distanceToPickup - b.distanceToPickup;

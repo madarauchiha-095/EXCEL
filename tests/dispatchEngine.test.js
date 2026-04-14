@@ -13,6 +13,26 @@ const agents = [
 }
 
 {
+  const order = { id: 10, pickup: { lat: 5.1, lng: 5.1 }, drop: { lat: 1, lng: 1 } };
+  const assignments = new Map([
+    ["near", [{ id: 11 }, { id: 12 }]],
+    ["far", []],
+  ]);
+  const selected = selectAgentForOrder(order, agents, assignments, { maxActiveOrdersPerAgent: 2 });
+  assert.equal(selected.id, "far");
+}
+
+{
+  const order = { id: 20, pickup: { lat: 5.1, lng: 5.1 }, drop: { lat: 1, lng: 1 } };
+  const assignments = new Map([
+    ["near", [{ id: 21 }, { id: 22 }]],
+    ["far", [{ id: 23 }, { id: 24 }]],
+  ]);
+  const selected = selectAgentForOrder(order, agents, assignments, { maxActiveOrdersPerAgent: 2 });
+  assert.equal(selected.id, "far");
+}
+
+{
   const order = { id: 2, pickup: { lat: 0.1, lng: 0.1 }, drop: { lat: 1, lng: 1 } };
   const activeGroup = [];
   const holdQueue = [];

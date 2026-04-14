@@ -25,9 +25,7 @@ function formatEta(seconds) {
 }
 
 function renderLogRows(logs, emptyText) {
-  if (logs.length === 0) {
-    return `<div class="empty">${emptyText}</div>`;
-  }
+  if (logs.length === 0) return `<div class="empty">${emptyText}</div>`;
 
   return logs.map(log => `
     <div class="log-row">
@@ -40,6 +38,27 @@ function renderLogRows(logs, emptyText) {
       </div>
     </div>
   `).join("");
+}
+
+function flattenActive(agentStates) {
+  return agentStates.flatMap(agentState => agentState.activeGroup);
+}
+
+function flattenQueue(agentStates) {
+  return agentStates.flatMap(agentState => agentState.holdQueue);
+}
+
+function sumMetrics(agentStates) {
+  return agentStates.reduce((metrics, agentState) => {
+    metrics.distance += agentState.currentMetrics.distance || 0;
+    metrics.duration += agentState.currentMetrics.duration || 0;
+    return metrics;
+  }, { distance: 0, duration: 0 });
+}
+
+function latestPairing(agentStates) {
+  const agentState = agentStates.find(item => item.lastPairingPassed !== null);
+  return agentState?.lastPairingPassed ?? null;
 }
 
 export function createDashboard(documentRef = document) {
@@ -57,6 +76,7 @@ export function createDashboard(documentRef = document) {
     routeLeg: documentRef.getElementById("routeLeg"),
     agentPosition: documentRef.getElementById("agentPosition"),
     osrmStatus: documentRef.getElementById("osrmStatus"),
+    agentBoard: documentRef.getElementById("agentBoard"),
     orderBoard: documentRef.getElementById("orderBoard"),
     orderLogs: documentRef.getElementById("orderLogs"),
     deliveryLogs: documentRef.getElementById("deliveryLogs"),
@@ -87,54 +107,92 @@ export function createDashboard(documentRef = document) {
     setTimeout(() => node.remove(), 3200);
   }
 
-  function renderOrderBoard(activeGroup, holdQueue) {
-    const visibleOrders = [
-      ...activeGroup.map(order => ({ order, lane: "Active" })),
-      ...holdQueue.map(order => ({ order, lane: "Queued" })),
-    ];
+  function renderAgentBoard(agentStates) {
+    if (!els.agentBoard) return;
+
+    if (agentStates.length === 0) {
+      els.agentBoard.innerHTML = `<div class="empty">No agents configured.</div>`;
+      return;
+    }
+
+    els.agentBoard.innerHTML = agentStates.map(agentState => {
+      const active = agentState.activeGroup.filter(order => !order.delivered).length;
+      const routeLeg = agentState.routePlan[agentState.legIndex];
+      const legText = routeLeg
+        ? `${routeLeg.type.toUpperCase()} ${orderLabel(routeLeg.order)}`
+        : "No active route";
+      const status = agentState.isPaused ? "Paused" : active > 0 ? "Moving" : "Idle";
+      const badge = agentState.isPaused ? "queued" : active > 0 ? "active" : "delivered";
+
+      return `
+        <div class="order-row">
+          <div class="order-main">
+            <span class="order-id">${agentState.agent.label}</span>
+            <span class="badge ${badge}">${status}</span>
+          </div>
+          <div class="order-meta">
+            Active ${active} · Queue ${agentState.holdQueue.length} · ${legText}
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  function renderOrderBoard(agentStates) {
+    const visibleOrders = agentStates.flatMap(agentState => [
+      ...agentState.activeGroup.map(order => ({ order, lane: "Active", agent: agentState.agent })),
+      ...agentState.holdQueue.map(order => ({ order, lane: "Queued", agent: agentState.agent })),
+    ]);
 
     if (visibleOrders.length === 0) {
       els.orderBoard.innerHTML = `<div class="empty">Click the map twice or load a sample order.</div>`;
       return;
     }
 
-    els.orderBoard.innerHTML = visibleOrders.map(({ order, lane }) => `
+    els.orderBoard.innerHTML = visibleOrders.map(({ order, lane, agent }) => `
       <div class="order-row">
         <div class="order-main">
           <span class="order-id">Order ${orderLabel(order)}</span>
           <span class="badge ${order.statusKey || "active"}">${order.statusText || lane}</span>
         </div>
         <div class="order-meta">
-          ${lane} · ${order.agentId || "agent"} · Pickup ${formatPoint(order.pickup)} · Drop ${formatPoint(order.drop)}
+          ${lane} · ${agent.label} · Pickup ${formatPoint(order.pickup)} · Drop ${formatPoint(order.drop)}
         </div>
       </div>
     `).join("");
   }
 
   function render(state) {
+    const agentStates = state.agentStates || [];
+    const activeGroup = flattenActive(agentStates);
+    const holdQueue = flattenQueue(agentStates);
+    const metrics = sumMetrics(agentStates);
+    const displayAgent = agentStates[0]?.agent;
     const delivered = state.allOrders.filter(order => order.delivered).length;
-    const active = state.activeGroup.filter(order => !order.delivered).length;
+    const active = activeGroup.filter(order => !order.delivered).length;
+    const pairingPassed = latestPairing(agentStates);
 
     els.metricOrders.innerText = state.allOrders.length;
     els.metricDelivered.innerText = delivered;
     els.metricActive.innerText = active;
-    els.metricQueue.innerText = state.holdQueue.length;
-    els.metricDistance.innerText = formatDistance(state.currentMetrics.distance);
-    els.metricEta.innerText = formatEta(state.currentMetrics.duration);
-    els.agentPosition.innerText = formatPoint(state.agent);
+    els.metricQueue.innerText = holdQueue.length;
+    els.metricDistance.innerText = formatDistance(metrics.distance);
+    els.metricEta.innerText = formatEta(metrics.duration);
+    els.agentPosition.innerText = displayAgent ? formatPoint(displayAgent) : "--";
     els.osrmStatus.innerText = state.osrmState;
     els.osrmStatus.className = `value health ${state.osrmState.toLowerCase()}`;
-    els.pauseButton.innerText = state.isPaused ? "Resume" : "Pause";
+    els.pauseButton.innerText = state.isPaused ? "Resume all" : "Pause all";
 
-    if (state.lastPairingPassed === true) {
+    if (pairingPassed === true) {
       els.pairingStatus.innerText = "Pairing passed";
-    } else if (state.lastPairingPassed === false) {
+    } else if (pairingPassed === false) {
       els.pairingStatus.innerText = "Pairing skipped";
     } else {
       els.pairingStatus.innerText = "Pairing idle";
     }
 
-    renderOrderBoard(state.activeGroup, state.holdQueue);
+    renderAgentBoard(agentStates);
+    renderOrderBoard(agentStates);
     els.orderLogs.innerHTML = renderLogRows(state.orderLogs, "No order events yet.");
     els.deliveryLogs.innerHTML = renderLogRows(state.deliveryLogs, "No delivery events yet.");
     els.orderLogCount.innerText = `${state.orderLogs.length} events`;

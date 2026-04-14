@@ -20,7 +20,7 @@ export function createMapView({
     attribution: "© OpenStreetMap contributors",
   }).addTo(map);
 
-  let polyline = null;
+  const polylines = new Map();
   let clickBuffer = [];
 
   function createAgentMarker(agent) {
@@ -39,22 +39,33 @@ export function createMapView({
     return L.marker(point, { icon: mapIcon("drop") }).addTo(map);
   }
 
-  function drawRoute(coords) {
-    if (polyline) map.removeLayer(polyline);
+  function drawRoute(routeKey, coords, color = "#2563eb") {
+    const existing = polylines.get(routeKey);
+    if (existing) map.removeLayer(existing);
     if (coords.length === 0) {
-      polyline = null;
+      polylines.delete(routeKey);
       return;
     }
 
-    polyline = L.polyline(
+    const polyline = L.polyline(
       coords.map(([lng, lat]) => [lat, lng]),
-      { color: "#2563eb", weight: 4 }
+      { color, weight: 4 }
     ).addTo(map);
+    polylines.set(routeKey, polyline);
   }
 
-  function clearRoute() {
-    if (polyline) map.removeLayer(polyline);
-    polyline = null;
+  function clearRoute(routeKey) {
+    if (routeKey) {
+      const polyline = polylines.get(routeKey);
+      if (polyline) map.removeLayer(polyline);
+      polylines.delete(routeKey);
+      return;
+    }
+
+    for (const polyline of polylines.values()) {
+      map.removeLayer(polyline);
+    }
+    polylines.clear();
   }
 
   map.on("click", event => {

@@ -13,6 +13,8 @@ const defaultStore = {
   orders: [],
   agents: [
     { id: "agent-1", label: "Agent 1", lat: 12.9716, lng: 77.5946, status: "idle" },
+    { id: "agent-2", label: "Agent 2", lat: 12.9352, lng: 77.6245, status: "idle" },
+    { id: "agent-3", label: "Agent 3", lat: 13.0031, lng: 77.5643, status: "idle" },
   ],
   logs: [],
 };
