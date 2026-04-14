@@ -12,6 +12,7 @@ node_modules
 dist
 dist-ssr
 osrm-data
+data/*.json
 *.local
 
 # Editor directories and files
